@@ -3,7 +3,7 @@ cargo-features = ["codegen-backend"]
 # cargo-features = ["codegen-backend"] 
 # The aboe also needs the profile.dev to be uncommented to use the cranelift backend
 [package]
-name = "docx_conv_crawler_rs"
+name = "document_conversion_crawler_rs"
 version = "0.1.0"
 edition = "2024"
 description = "A simple crawler to convert docx files to text"
