@@ -26,6 +26,11 @@ pub fn find_by_ext(dir: &Path, ext: &str) -> Result<Vec<PathBuf>> {
 
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         debug!("Checking {:?}", entry.path());
+
+        if entry.path().starts_with("~") || entry.path().starts_with("$") {
+            continue;
+        }
+
         if entry.path().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some(ext) {
             files.push(entry.path().to_path_buf());
         }
