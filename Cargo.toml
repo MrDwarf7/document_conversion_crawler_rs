@@ -1,0 +1,76 @@
+cargo-features = ["codegen-backend"]
+# cargo-features = ["profile-rustflags", "trim-paths"] # required for both trimming paths and setting rustflags
+# cargo-features = ["codegen-backend"] 
+# The aboe also needs the profile.dev to be uncommented to use the cranelift backend
+[package]
+name = "docx_conv_crawler_rs"
+version = "0.1.0"
+edition = "2024"
+description = "A simple crawler to convert docx files to text"
+
+# For running the main server as a watch call
+# cargo watch -q -c -w src/ -x run
+
+
+[dependencies]
+eyre = { version = "0.6.12" }
+# dotenvy = "*"
+futures = "0.3.31"
+
+# Base dependencies/Commons
+# reqwest = { version = "*", features = ["cookies", "json", "multipart", "stream"] }
+# uuid = { version = "*", features = ["v4"] }
+# serde = { version = "*", features = ["derive"] }
+# serde_json = "*"
+thiserror = { version = "2.0.7" }
+tokio = { version = "1.42.0", features = ["full", "tracing"] }
+
+clap = { version = "4.5.30", features = ["color", "derive", "suggestions"] }
+
+# Logging and tracing
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = [
+    "ansi",
+    "chrono",
+    "env-filter",
+    "serde",
+    "std",
+] }
+
+
+# Extra stuff
+# tokio-util = { version = "*", features = ["codec"] }
+# toml = "*"
+
+# Utilities
+ async-trait = "0.1.83"
+# static-toml = "*"
+walkdir = { version = "2.5.0" }
+# chrono = "*"
+# itertools = "*"
+
+
+[profile.dev.package."*"]
+opt-level = 3
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+codegen-units = 256
+incremental = true
+#rustflags = ["-Zthreads=16" ]
+
+codegen-backend = "cranelift"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+debug = "none"
+debug-assertions = false
+incremental = true
+# trim-paths = "all"
+#rustflags = ["-Zthreads=16" ]
+
+# strip = "symbols" # Leave off @ w
+# lto = "fat" ## Can't use with cranelift yet
+# panic = "unwind"
