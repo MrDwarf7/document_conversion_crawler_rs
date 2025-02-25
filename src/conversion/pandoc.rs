@@ -1,12 +1,12 @@
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::Converter;
 use crate::pandoc_path;
 use crate::prelude::*;
 
 pub struct PandocConverter {
-    name: PathBuf,
+    program_name: PathBuf,
 }
 
 impl PandocConverter {
@@ -23,7 +23,16 @@ impl PandocConverter {
     pub fn new() -> Self {
         let name = pandoc_path!();
 
-        Self { name }
+        Self { program_name: name }
+    }
+
+    /// Creates a folder
+    /// that follows the naming of
+    /// input_filename/media/stuff....
+    pub fn media_folder(&self, path: &Path) -> Result<PathBuf> {
+        let filename = path.file_stem().unwrap().to_str().unwrap();
+        let parent_folder = path.parent().unwrap();
+        Ok(parent_folder.join(filename))
     }
 }
 
@@ -39,12 +48,27 @@ impl Converter for PandocConverter {
     async fn convert(&self, input: PathBuf, output: PathBuf) -> Result<()> {
         debug!("Converting '{}' to '{}'", input.display(), output.display());
 
-        let filename = input.file_stem().unwrap().to_str().unwrap();
-        let parent_folder = input.parent().unwrap();
+        let media_folder = match self.media_folder(&output) {
+            Ok(folder) => folder,
+            Err(e) => {
+                warn!("Failed to create media folder: {}", e);
+                return Err(Error::MediaFolderCreationFailed(format!(
+                    "Filename: {:?}, Parent: {:?}, Output: {:?}, Error: {}",
+                    input.file_stem().unwrap(),
+                    input.parent().unwrap(),
+                    output,
+                    e
+                )));
+            }
+        };
 
-        let media_folder = parent_folder.join(filename);
+        debug!("Media folder: {:?}", media_folder);
 
-        let cmd = tokio::process::Command::new(&self.name)
+        // let filename = input.file_stem().unwrap().to_str().unwrap();
+        // let parent_folder = input.parent().unwrap();
+        // let media_folder = parent_folder.join(filename);
+
+        let cmd = tokio::process::Command::new(&self.program_name)
             .arg("--extract-media")
             .arg(&media_folder)
             .arg("-s")
@@ -62,7 +86,7 @@ impl Converter for PandocConverter {
             let mut stderr = String::new();
             output.stderr.as_slice().read_to_string(&mut stderr)?;
             return Err(Error::Generic(format!(
-                "Failed to convert {} to {:?}: {}",
+                "Success checker: Failed to convert {} to {:?}: {}",
                 input.display(),
                 output,
                 stderr
@@ -73,7 +97,7 @@ impl Converter for PandocConverter {
     }
 
     async fn check_installed(&self) -> crate::Result<bool> {
-        let program_name = self.name.clone();
+        let program_name = self.program_name.clone();
         let program_name_c = program_name.clone();
 
         let checked = tokio::task::spawn(async move {
@@ -99,6 +123,6 @@ impl Converter for PandocConverter {
 
     #[inline]
     fn name(&self) -> impl AsRef<str> {
-        self.name.display().to_string()
+        self.program_name.display().to_string()
     }
 }

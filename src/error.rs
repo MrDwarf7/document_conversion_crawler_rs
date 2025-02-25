@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Generic error handler: {0}")]
@@ -23,4 +25,10 @@ pub enum Error {
 
     #[error("Conversion program not installed: {0}")]
     ConversionProgramNotInstalled(String),
+
+    #[error("Media folder creation failed: context: {0}")]
+    MediaFolderCreationFailed(String),
+
+    #[error("Failed to rename file: {0}")]
+    FailedRenameFile(PathBuf),
 }

@@ -30,6 +30,10 @@ pub struct Cli {
     #[arg(index = 3, help = "The output extension to convert to. This is subject to Pandoc's supported formats.", value_hint = clap::ValueHint::Other)]
     pub output_extension: String,
 
+    /// A custom output directory that the converted file and its media container will be written to.
+    #[arg(short = 'o', long = "output", help = "A custom output directory that the converted file and its media container will be written to", required = false, value_hint = clap::ValueHint::FilePath)]
+    pub output_directory: Option<PathBuf>,
+
     /// Optional verbosity level of the logger.
     /// You may provide this as either a string or a number.
     ///
@@ -47,6 +51,13 @@ pub struct Cli {
 impl Cli {
     pub fn new() -> Self {
         let s = Self::parse();
+
+        if let Some(output_dir) = &s.output_directory {
+            if !output_dir.exists() {
+                std::fs::create_dir_all(output_dir).unwrap();
+            }
+        }
+
         // if s.version {
         //     println!("{} {}", crate::crate_name!(), crate::crate_version!());
         //     std::process::exit(0);
