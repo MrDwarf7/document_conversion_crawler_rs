@@ -177,8 +177,13 @@ pub async fn convert_files_with_output<C: Converter + Send + Sync + 'static>(
         .individual_files
         .into_iter()
         .zip(processable.top_level_folder_names.into_iter())
+        // BUG: If primary itter has many more
+        // items, zipping will cause issues with how we
+        // generate folder names for output
+        //
         .map(|(input_file, top_level_name)| {
             // C:\temp\somefile.docx -> C:\temp\somefile.md
+
             let output_file_new_ext = input_file.with_extension(target_ext);
 
             let output = match top_level_generator(&top_level_name, output_dir) {
