@@ -20,6 +20,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             gcc: gcc-x86-64-linux-gnu
+            dependency: pandoc
             rust: nightly
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -39,8 +40,10 @@ jobs:
       - name: "Install gcc"
         if: matrix.gcc != ''
         run: sudo apt update && sudo apt install -yq ${{ matrix.gcc }}
+      - name: "Install dependency"
+        if: matrix.dependency != ''
+        run: sudo apt update && sudo apt install -yq ${{ matrix.dependency }}
       - name: "Setup Rust toolchain"
         run: rustup toolchain install nightly --profile default --target ${{ matrix.target }} --no-self-update
       - name: "Run Cargo test"
         run: cargo test --all --target ${{ matrix.target }}
-

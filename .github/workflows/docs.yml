@@ -21,6 +21,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             gcc: gcc-x86-64-linux-gnu
+            dependency: pandoc
             rust: nightly
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -34,6 +35,9 @@ jobs:
       - name: "Install gcc"
         if: matrix.gcc != ''
         run: sudo apt update && sudo apt install -yq ${{ matrix.gcc }}
+      - name: "Install dependency"
+        if: matrix.dependency != ''
+        run: sudo apt update && sudo apt install -yq ${{ matrix.dependency }}
       - name: "Cache Cargo dependencies"
         uses: Swatinem/rust-cache@v2
         with:
@@ -55,6 +59,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             gcc: gcc-x86-64-linux-gnu
+            dependency: pandoc
             rust: nightly
     runs-on: ${{ matrix.os }}
     env:
@@ -65,6 +70,9 @@ jobs:
       - name: "Install gcc"
         if: matrix.gcc != ''
         run: sudo apt update && sudo apt install -yq ${{ matrix.gcc }}
+      - name: "Install dependency"
+        if: matrix.dependency != ''
+        run: sudo apt update && sudo apt install -yq ${{ matrix.dependency }}
       - name: "Cache Cargo dependencies"
         uses: Swatinem/rust-cache@v2
       - name: "Setup Rust toolchain"
@@ -116,6 +124,9 @@ jobs:
       - name: "Install gcc"
         if: matrix.gcc != ''
         run: sudo apt update && sudo apt install -yq ${{ matrix.gcc }}
+      - name: "Install dependency"
+        if: matrix.dependency != ''
+        run: sudo apt update && sudo apt install -yq ${{ matrix.dependency }}
       - name: "Setup Rust toolchain"
         run: rustup toolchain install nightly --profile default --target ${{ matrix.target }} --no-self-update
       - name: "Run Cargo Doc generation"
