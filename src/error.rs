@@ -31,4 +31,7 @@ pub enum Error {
 
     #[error("Failed to rename file: {0}")]
     FailedRenameFile(PathBuf),
+
+    #[error("Pandoc binary not found: {0}")]
+    PandocNotFound(String),
 }
