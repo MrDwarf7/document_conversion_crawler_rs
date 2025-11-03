@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use clap::{Parser, ValueEnum, command};
+use clap::{Parser, ValueEnum};
 
 use crate::prelude::*;
 
@@ -52,10 +52,10 @@ impl Cli {
     pub fn new() -> Self {
         let s = Self::parse();
 
-        if let Some(output_dir) = &s.output_directory {
-            if !output_dir.exists() {
-                std::fs::create_dir_all(output_dir).unwrap();
-            }
+        if let Some(output_dir) = &s.output_directory
+            && !output_dir.exists()
+        {
+            std::fs::create_dir_all(output_dir).unwrap();
         }
 
         // if s.version {
