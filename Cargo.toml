@@ -13,39 +13,35 @@ description = "A simple crawler to convert docx files to text"
 
 
 [dependencies]
+async-trait = "0.1.83"
+clap = { version = "4.5.30", features = ["color", "derive", "suggestions"] }
 eyre = { version = "0.6.12" }
-# dotenvy = "*"
 futures = "0.3.31"
+thiserror = { version = "2.0.7" }
+tokio = { version = "1.42.0", features = ["full", "tracing"] }
+walkdir = { version = "2.5.0" }
 
+# Logging and tracing
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = [
+  "ansi",
+  "chrono",
+  "env-filter",
+  "serde",
+  "std",
+] }
+
+
+# dotenvy = "*"
 # Base dependencies/Commons
 # reqwest = { version = "*", features = ["cookies", "json", "multipart", "stream"] }
 # uuid = { version = "*", features = ["v4"] }
 # serde = { version = "*", features = ["derive"] }
 # serde_json = "*"
-thiserror = { version = "2.0.7" }
-tokio = { version = "1.42.0", features = ["full", "tracing"] }
-
-clap = { version = "4.5.30", features = ["color", "derive", "suggestions"] }
-
-# Logging and tracing
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = [
-    "ansi",
-    "chrono",
-    "env-filter",
-    "serde",
-    "std",
-] }
-
-
 # Extra stuff
+# static-toml = "*"
 # tokio-util = { version = "*", features = ["codec"] }
 # toml = "*"
-
-# Utilities
- async-trait = "0.1.83"
-# static-toml = "*"
-walkdir = { version = "2.5.0" }
 # chrono = "*"
 # itertools = "*"
 

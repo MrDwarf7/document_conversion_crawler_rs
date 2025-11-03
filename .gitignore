@@ -13,6 +13,7 @@ data/**/*
 data/*.csv
 data/*.xlsx
 data/*.xlsm
+data/*.docx
 _*_dist/
 
 
@@ -37,3 +38,8 @@ env*
 .idea/
 .idea/*
 .idea/**/*
+
+
+.old
+.old/
+.old/*

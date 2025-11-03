@@ -1,10 +1,10 @@
 edition = "2024"
 newline_style = "Unix"
 
-max_width = 110
+max_width = 90
 
 fn_params_layout = "Tall"
-fn_call_width = 100
+fn_call_width = 80
 
 force_multiline_blocks = true
 group_imports = "StdExternalCrate"
