@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use super::Converter;
+use crate::conversion::Converter;
 use crate::pandoc_path;
 use crate::prelude::*;
 
@@ -29,7 +29,8 @@ impl PandocConverter {
     /// Creates a folder
     /// that follows the naming of
     /// input_filename/media/stuff....
-    pub fn media_folder(&self, path: &Path) -> Result<PathBuf> {
+    pub fn media_folder<P: AsRef<Path>>(&self, path: P) -> Result<impl AsRef<Path>> {
+        let path = path.as_ref();
         let filename = path.file_stem().unwrap().to_str().unwrap();
         let parent_folder = path.parent().unwrap();
         Ok(parent_folder.join(filename))
@@ -45,7 +46,10 @@ impl Default for PandocConverter {
 
 #[async_trait::async_trait]
 impl Converter for PandocConverter {
-    async fn convert(&self, input: PathBuf, output: PathBuf) -> Result<()> {
+    async fn convert<P: AsRef<Path> + Send + Sync>(&self, input: P, output: P) -> Result<()> {
+        let input = input.as_ref();
+        let output = output.as_ref();
+
         debug!("Converting '{}' to '{}'", input.display(), output.display());
 
         let media_folder = match self.media_folder(&output) {
@@ -61,6 +65,7 @@ impl Converter for PandocConverter {
                 )));
             }
         };
+        let media_folder = media_folder.as_ref();
 
         debug!("Media folder: {:?}", media_folder);
 
@@ -70,11 +75,11 @@ impl Converter for PandocConverter {
 
         let cmd = tokio::process::Command::new(&self.program_name)
             .arg("--extract-media")
-            .arg(&media_folder)
+            .arg(media_folder)
             .arg("-s")
-            .arg(&input)
+            .arg(input)
             .arg("-o")
-            .arg(&output)
+            .arg(output)
             .output()
             .await;
 
@@ -96,7 +101,7 @@ impl Converter for PandocConverter {
         Ok(())
     }
 
-    async fn check_installed(&self) -> crate::Result<bool> {
+    async fn check_installed(&self) -> impl Into<bool> {
         let program_name = self.program_name.clone();
         let program_name_c = program_name.clone();
 
@@ -106,19 +111,22 @@ impl Converter for PandocConverter {
                 .output()
                 .await
                 .map(|output| output.status.success())
+                // .unwrap_or(false)
                 .map_err(Error::from)
         })
         .await
-        .map_err(Error::from)?;
+        // .unwrap_or_else(|_| false);
+        .map_err(Error::from)
+        .and_then(|res| res);
 
         trace!("Checked if {program_name_c:?} is installed: {checked:?}");
 
         if checked.is_err() {
             warn!("{program_name_c:?} is not installed");
-            return Ok(false);
+            return false;
         };
 
-        Ok(checked?)
+        checked.unwrap_or(false)
     }
 
     #[inline]

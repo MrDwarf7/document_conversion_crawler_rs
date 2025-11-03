@@ -2,20 +2,29 @@ mod cli;
 mod conversion;
 mod error;
 mod lazy_logger;
+mod macros;
 mod prelude;
+
+// platform-specific prelude setup
+#[cfg(unix)]
+mod pre_unix;
+
+// platform-specific prelude setup
+#[cfg(windows)]
+mod pre_windows;
 
 use std::sync::Arc;
 
-use conversion::{Converter, ProcessableEntities};
 use eyre::WrapErr;
 
-pub use self::prelude::*;
+use crate::conversion::{Converter, ProcessableEntities};
+pub use crate::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = cli::Cli::new();
     let level = args.verbosity_level().into();
-    let _ = init_logger(level).init();
+    init_logger(level).init();
 
     let converter = Arc::new(conversion::pandoc::PandocConverter::new());
 
@@ -50,14 +59,19 @@ async fn convert_call<C: Converter + Send + Sync + 'static>(
         }
 
         tokio::task::spawn(async move {
-            conversion::convert_files_with_output(processable, converter, &args.output_extension, &output_dir)
-                .await
-                .wrap_err("Failed to convert files")
-                .map_err(|e| Error::Generic(format!("Failed to convert files due to: {}", e)))
+            conversion::convert_files_with_output(
+                processable,
+                converter,
+                args.output_extension.as_str(),
+                &output_dir,
+            )
+            .await
+            .wrap_err("Failed to convert files")
+            .map_err(|e| Error::Generic(format!("Failed to convert files due to: {}", e)))
         })
     } else {
         tokio::task::spawn(async move {
-            conversion::convert_files(processable, converter, &args.output_extension)
+            conversion::convert_files(processable, converter, args.output_extension.as_str())
                 .await
                 .wrap_err("Failed to convert files")
                 .map_err(|e| Error::Generic(format!("Failed to convert files due to: {}", e)))

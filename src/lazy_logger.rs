@@ -10,9 +10,13 @@ pub struct LazyLogger {
 
 #[allow(dead_code)]
 impl LazyLogger {
-    pub fn log_input_output(&mut self, input: &Path, output: &Path) {
+    pub fn log_input_output<P: AsRef<Path>>(&mut self, input: P, output: P) {
         self.new_line();
-        self.insert(format!("Converting '{}' to '{}'", input.display(), output.display()));
+        self.insert(format!(
+            "Converting '{}' to '{}'",
+            input.as_ref().display(),
+            output.as_ref().display()
+        ));
     }
 
     pub fn insert(&mut self, s: impl AsRef<str>) {
