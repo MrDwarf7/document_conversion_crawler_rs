@@ -5,12 +5,12 @@ use crate::conversion::Converter;
 use crate::pandoc_path;
 use crate::prelude::*;
 
-pub struct PandocConverter {
-    program_name: PathBuf,
+pub struct PandocConverter<P = PathBuf> {
+    program_name: P,
 }
 
 impl PandocConverter {
-    /// Create a new PandocConverter
+    /// Create a new `PandocConverter`
     ///
     /// ### Note:
     /// This calls a macro `pandoc_path!` which is defined in `src/prelude.rs`
@@ -21,18 +21,30 @@ impl PandocConverter {
     /// If hash compare - this has been compressed using upx (`upx --best pandoc -o pandoc_upx`)
     #[inline]
     pub fn new() -> Self {
-        let name = pandoc_path!();
-
-        Self { program_name: name }
+        let program_name = pandoc_path!();
+        Self { program_name }
     }
 
     /// Creates a folder
     /// that follows the naming of
-    /// input_filename/media/stuff....
-    pub fn media_folder<P: AsRef<Path>>(&self, path: P) -> Result<impl AsRef<Path>> {
+    /// `input_filename/media/stuff....`
+    pub fn media_folder<P>(path: P) -> Result<impl AsRef<Path>>
+    where
+        P: AsRef<Path>,
+    {
         let path = path.as_ref();
-        let filename = path.file_stem().unwrap().to_str().unwrap();
-        let parent_folder = path.parent().unwrap();
+        let filename = path.file_stem().unwrap().to_str().ok_or_else(|| {
+            Error::Generic(format!(
+                "Failed to get file stem from path: {}",
+                path.display()
+            ))
+        })?;
+        let parent_folder = path.parent().ok_or_else(|| {
+            Error::Generic(format!(
+                "Failed to get parent folder from path: {:?}",
+                path.display()
+            ))
+        })?;
         Ok(parent_folder.join(filename))
     }
 }
@@ -46,28 +58,30 @@ impl Default for PandocConverter {
 
 #[async_trait::async_trait]
 impl Converter for PandocConverter {
-    async fn convert<P: AsRef<Path> + Send + Sync>(&self, input: P, output: P) -> Result<()> {
+    async fn convert<P>(&self, input: P, output: P) -> Result<()>
+    where
+        P: AsRef<Path> + Send + Sync,
+    {
         let input = input.as_ref();
         let output = output.as_ref();
 
-        debug!("Converting '{}' to '{}'", input.display(), output.display());
+        trace!("Converting '{}' to '{}'", input.display(), output.display());
 
-        let media_folder = match self.media_folder(&output) {
+        let media_folder = match PandocConverter::media_folder(&output) {
             Ok(folder) => folder,
             Err(e) => {
-                warn!("Failed to create media folder: {}", e);
+                warn!("Failed to create media folder: {e}");
                 return Err(Error::MediaFolderCreationFailed(format!(
-                    "Filename: {:?}, Parent: {:?}, Output: {:?}, Error: {}",
-                    input.file_stem().unwrap(),
-                    input.parent().unwrap(),
-                    output,
-                    e
+                    "Filename: {}, Parent: {}, Output: {}, Error: {e}",
+                    input.file_stem().unwrap().display(),
+                    input.parent().unwrap().display(),
+                    output.display()
                 )));
             }
         };
         let media_folder = media_folder.as_ref();
 
-        debug!("Media folder: {:?}", media_folder);
+        trace!("Media folder: {:?}", media_folder);
 
         // let filename = input.file_stem().unwrap().to_str().unwrap();
         // let parent_folder = input.parent().unwrap();
@@ -83,18 +97,14 @@ impl Converter for PandocConverter {
             .output()
             .await;
 
-        // println!("after cmd");
-
         let output = cmd.map_err(Error::from)?;
 
         if !output.status.success() {
             let mut stderr = String::new();
             output.stderr.as_slice().read_to_string(&mut stderr)?;
             return Err(Error::Generic(format!(
-                "Success checker: Failed to convert {} to {:?}: {}",
+                "Success checker: Failed to convert {} to {output:?}: {stderr}",
                 input.display(),
-                output,
-                stderr
             )));
         }
 
@@ -111,20 +121,18 @@ impl Converter for PandocConverter {
                 .output()
                 .await
                 .map(|output| output.status.success())
-                // .unwrap_or(false)
                 .map_err(Error::from)
         })
         .await
-        // .unwrap_or_else(|_| false);
         .map_err(Error::from)
         .and_then(|res| res);
 
-        trace!("Checked if {program_name_c:?} is installed: {checked:?}");
+        debug!("Checked if {program_name_c:?} is installed: {checked:?}");
 
         if checked.is_err() {
             warn!("{program_name_c:?} is not installed");
             return false;
-        };
+        }
 
         checked.unwrap_or(false)
     }

@@ -6,12 +6,15 @@ use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tokio::task::JoinError;
 use walkdir::WalkDir;
 
 #[allow(unused_imports)]
 use crate::lazy_logger::LazyLogger;
 use crate::prelude::*;
+
+const DANGER_CHARS: [&str; 2] = ["$", "~"];
+
+static INITIAL_CAPACITY: usize = 1024;
 
 #[async_trait::async_trait]
 pub trait Converter {
@@ -25,36 +28,165 @@ pub trait Converter {
     fn name(&self) -> impl AsRef<str>;
 }
 
-pub type IndividualFiles = Vec<PathBuf>;
-pub type TopLevelFolderNames = Vec<PathBuf>;
-
-#[derive(Debug, Default)]
-pub struct ProcessableEntities {
-    pub individual_files:       IndividualFiles,
-    pub top_level_folder_names: TopLevelFolderNames,
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub abs_path: PathBuf,
+    pub rel_path: PathBuf,
+    pub depth:    usize,
 }
 
-impl AsMut<ProcessableEntities> for &mut ProcessableEntities {
-    fn as_mut(&mut self) -> &mut ProcessableEntities {
+impl FileEntry {
+    pub fn new<P: AsRef<Path>>(abs_path: P, rel_path: P, depth: usize) -> Self {
+        Self {
+            abs_path: abs_path.as_ref().to_path_buf(),
+            rel_path: rel_path.as_ref().to_path_buf(),
+            depth,
+        }
+    }
+}
+
+impl AsRef<FileEntry> for FileEntry {
+    fn as_ref(&self) -> &FileEntry {
         self
     }
 }
 
-pub async fn find_by_ext<S: AsRef<str>, P: AsRef<Path>>(dir: P, ext: S) -> Result<ProcessableEntities> {
-    let mut collector = ProcessableEntities::default();
+#[derive(Debug, Default)]
+pub struct ConvertableEnts<P: AsRef<Path> = PathBuf, F: AsRef<FileEntry> = FileEntry> {
+    pub input_root: P,
+    pub files:      Vec<F>,
+    // /// usize -> index of self.files
+    // pub files_by_parent: HashMap<PathBuf, Vec<usize>>,
+}
+
+impl AsRef<ConvertableEnts> for ConvertableEnts {
+    fn as_ref(&self) -> &ConvertableEnts {
+        self
+    }
+}
+
+impl AsMut<ConvertableEnts> for &mut ConvertableEnts {
+    fn as_mut(&mut self) -> &mut ConvertableEnts {
+        self
+    }
+}
+
+impl ConvertableEnts {
+    pub fn new_with_capacity<P: AsRef<Path>>(root: P, cap: usize) -> Self {
+        Self {
+            input_root: root.as_ref().to_path_buf(),
+            files:      Vec::with_capacity(cap),
+            // files_by_parent: HashMap::new(),
+        }
+    }
+
+    pub fn add_file<P: AsRef<Path>>(&mut self, abs_path: P) {
+        let abs_path = abs_path.as_ref();
+        let relative = abs_path.strip_prefix(&self.input_root).unwrap();
+        let root_dir_depth = self.input_root.components().count();
+
+        let depth = abs_path.components().count() - root_dir_depth;
+
+        // let parent = abs_path.parent().unwrap().to_path_buf();
+        // let idx = self.files.len();
+
+        self.files.push(FileEntry::new(abs_path, relative, depth));
+        // self.files_by_parent.entry(parent).or_default().push(idx);
+    }
+
+    pub fn count(&self) -> usize {
+        self.files.len()
+    }
+}
+
+pub async fn convert_files<Ce, C, S, P>(
+    convertables: Ce,
+    converter: Arc<C>,
+    target_ext: S,
+    output_dir: Option<P>,
+) -> Result<()>
+where
+    Ce: AsRef<ConvertableEnts>,
+    C: Converter + Send + Sync + 'static,
+    S: AsRef<str>,
+    P: AsRef<Path>,
+{
+    if !converter.check_installed().await.into() {
+        return Err(Error::ConversionProgramNotInstalled(
+            converter.name().as_ref().to_string(),
+        ));
+    }
+
+    let convertables = convertables.as_ref();
+    let mut tasks = Vec::with_capacity(convertables.count());
+
+    for entry in &convertables.files {
+        let input = &entry.abs_path;
+
+        let output = if let Some(ref out_dir) = output_dir {
+            let rel_with_new_ext = entry.rel_path.with_extension(target_ext.as_ref());
+            let output = out_dir.as_ref().join(rel_with_new_ext);
+
+            if let Some(parent) = output.parent()
+                && !parent.exists()
+            {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            output
+        } else {
+            input.with_extension(target_ext.as_ref())
+        };
+
+        if output.exists() {
+            warn!("Output file already exists: {output:?}");
+            continue;
+        }
+
+        let converter = Arc::clone(&converter);
+        let input = input.clone();
+
+        tasks.push(tokio::spawn(async move { converter.convert(input, output).await }));
+    }
+
+    info!("Running conversion for {} files", tasks.len());
+
+    let (success, failed) = totals(tasks).await;
+    info!("Successly processed: {success} files");
+
+    if failed > 0 {
+        warn!("Conversion completed with {failed} errors.");
+    }
+
+    let total = success + failed;
+    let success_perc = success.div(total).mul(100);
+    info!("Overall success rate: {success_perc:.2}%");
+
+    Ok(())
+}
+
+pub async fn find_by_ext<S, P>(dir: P, ext: S) -> Result<ConvertableEnts>
+where
+    S: AsRef<str>,
+    P: AsRef<Path>,
+{
     let ext = ext.as_ref();
     let dir = dir.as_ref();
     let dir_path = dir.to_path_buf();
 
     debug!("Finding files with extension '{ext}' in '{dir:?}'");
 
-    let ext = *remove_dot(Cow::Borrowed(&ext));
-    trace!("Extension after removing dot: '{ext}'");
-    let dir_len = dir.components().count();
+    let ext = remove_dot(ext).to_string();
+    debug!("Extension after removing dot: '{ext}'");
 
-    if let Err(e) = fix_mangled_batch(dir) {
-        error!("Error fixing mangled files: {:?}", e);
-        return Err(e);
+    // let dir_len = dir.components().count(); // original
+
+    let ext_clone = ext.clone();
+    let (files_to_fix, files_to_process) =
+        tokio::task::spawn_blocking(move || discover_and_cat(dir_path, ext_clone))
+            .await?;
+
+    if !files_to_fix.is_empty() {
+        fix_mangled_par(files_to_fix).await?;
     }
 
     let mut pe = ConvertableEnts::new_with_capacity(dir, files_to_process.len());
@@ -64,26 +196,27 @@ pub async fn find_by_ext<S: AsRef<str>, P: AsRef<Path>>(dir: P, ext: S) -> Resul
         pe.add_file(file_path);
     }
 
-    debug!("Files: {:#?}", collector.individual_files);
-    debug!("Found {} files with extension {}", collector.individual_files.len(), ext);
+    let l = pe.count();
+    debug!("Found {l} files with extension '{ext}'");
 
-    Ok(collector)
+    Ok(pe)
 }
 
-fn collect_batch<P, S, PE>(dir: P, dir_len: usize, ext: S, mut collector: PE) -> Result<()>
-where
-    P: AsRef<Path>,
-    S: AsRef<str>,
-    PE: AsMut<ProcessableEntities>,
-{
-    for entry in WalkDir::new(dir).into_iter().flat_map(|e| e.ok()) {
-        trace!("Checking {:?}", entry.path());
+fn discover_and_cat<S: AsRef<str>, P: AsRef<Path>>(
+    dir: P,
+    ext: S,
+) -> (Vec<impl AsRef<Path>>, Vec<impl AsRef<Path>>) {
+    let mut to_fix = vec![];
+    let mut to_process = Vec::with_capacity(INITIAL_CAPACITY);
 
-        if entry.path().is_dir() && entry.path().components().count() == dir_len + 1 {
-            collector
-                .as_mut()
-                .top_level_folder_names
-                .push(entry.path().to_path_buf());
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+
+        if needs_fixing(path) {
+            to_fix.push(path.to_path_buf());
         }
 
         if path.is_file()
@@ -93,31 +226,51 @@ where
         }
     }
 
+    (to_fix, to_process)
+}
+
+#[inline]
+fn needs_fixing<P: AsRef<Path>>(path: P) -> bool {
+    path.as_ref()
+        .to_str()
+        .is_some_and(|s| DANGER_CHARS.iter().any(|&c| s.contains(c)))
+
+    // .map(|s| DANGER_CHARS.iter().any(|&c| s.contains(c)))
+    // .unwrap_or(false)
+}
+
+async fn fix_mangled_par<P: AsRef<Path>>(paths: Vec<P>) -> Result<()> {
+    let tasks: Vec<_> = paths
+        .into_iter()
+        .map(|path| {
+            let path = path.as_ref().to_path_buf();
+            tokio::spawn(async move { fix_single_file(path).await })
+        })
+        .collect();
+
+    for task in tasks {
+        task.await??;
+    }
+
     Ok(())
 }
 
-fn fix_mangled_batch<P: AsRef<Path>>(dir: P) -> Result<()> {
-    for entry in WalkDir::new(dir).into_iter().flat_map(|e| e.ok()) {
-        if !entry.path().to_str().unwrap().contains("~") || !entry.path().to_str().unwrap().contains("$") {
-            continue;
-        }
+async fn fix_single_file<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path_str = path
+        .as_ref()
+        .to_str()
+        .ok_or_else(|| Error::Generic("Invalid UTF-8 in path".to_string()))?;
 
-        warn!("Fixing file/folder containing '~' or '$' with '_' char: {:?}", entry.path());
-        let fixed = fix_mangled_name(entry.path().to_str().unwrap())
-            .as_ref()
-            .to_string();
-        trace!("Original name: {:?} | Fixed name: {:?}", entry.path(), fixed);
+    let fixed = fix_mangled_name(path_str).as_ref().to_string();
 
-        match std::fs::rename(entry.path(), &fixed) {
-            Ok(_) => {
-                debug!("Renamed file/folder to: {:?}", fixed);
-            }
-            Err(e) => {
-                error!("Failed to rename file/folder: {:?}", e);
-                return Err(Error::FailedRenameFile(entry.path().to_path_buf()));
-            }
-        }
-    }
+    warn!("Fixing file/folder: {:?} -> {fixed}", path.as_ref().display());
+
+    tokio::fs::rename(&path, &fixed).await.map_err(|e| {
+        error!("Failed to rename: {e:?}");
+        Error::FailedRenameFile(path.as_ref().to_path_buf())
+    })?;
+
+    debug!("Renamed file/folder to: {fixed}");
     Ok(())
 }
 
@@ -135,220 +288,32 @@ fn fix_mangled_name<S: AsRef<str>>(name: S) -> impl AsRef<str> + Into<String> {
     name
 }
 
-#[inline]
-fn remove_dot<'a>(ext: Cow<'a, &'a str>) -> Cow<'a, &'a str> {
-    if ext.contains('.') {
-        let i = ext.find('.').unwrap();
-        return Cow::Owned(&ext[i + 1..]);
-    }
-    ext
-}
+type SuccessCount = usize;
+type FailedCount = usize;
+type TotalsResult = (SuccessCount, FailedCount);
 
-pub async fn convert_files<C, S>(
-    processable: ProcessableEntities,
-    converter: Arc<C>,
-    target_ext: S,
-) -> Result<()>
-where
-    C: Converter + Send + Sync + 'static,
-    S: AsRef<str>,
-{
-    if !converter.check_installed().await.into() {
-        return Err(Error::ConversionProgramNotInstalled(converter.name().as_ref().to_string()));
-    }
+async fn totals(tasks: Vec<tokio::task::JoinHandle<Result<()>>>) -> TotalsResult {
+    // let task_len: f64 = tasks.len() as f64;
+    // let mut errors = vec![];
 
-    // if let Ok(false) = converter.check_installed().await {
-    //     return Err(Error::ConversionProgramNotInstalled(converter.name().as_ref().to_string()));
-    // }
-
-    let converter = Arc::clone(&converter);
-
-    // let mut p = LazyLogger::default();
-
-    let tasks: Vec<_> = processable
-        .individual_files
-        .into_iter()
-        .map(|file| {
-            let output = file.with_extension(target_ext.as_ref());
-            let converter = Arc::clone(&converter);
-
-            // p.log_input_output(&file, &ouput);
-
-            tokio::task::spawn(async move {
-                let fut = converter.convert(file, output);
-                tokio::pin!(fut);
-                (&mut fut).await
-            })
-        })
-        .collect();
-
-    // p.flush_async().await?;
-
-    info!("Running conversion for {} files", tasks.len());
+    let mut success: usize = 0;
+    let mut failed: usize = 0;
 
     for task in tasks {
-        let task = task.await;
-        task.map_err(Error::from)??;
-    }
-
-    Ok(())
-}
-
-pub async fn convert_files_with_output<C, S, P>(
-    processable: ProcessableEntities,
-    converter: Arc<C>,
-    target_ext: S,
-    output_dir: P,
-) -> Result<()>
-where
-    C: Converter + Send + Sync + 'static,
-    S: AsRef<str>,
-    P: AsRef<Path>,
-{
-    if !converter.check_installed().await.into() {
-        return Err(Error::ConversionProgramNotInstalled(converter.name().as_ref().to_string()));
-    }
-
-    // if let Ok(false) = converter.check_installed().await {
-    //     return Err(Error::ConversionProgramNotInstalled(converter.name().as_ref().to_string()));
-    // }
-
-    let converter = Arc::clone(&converter);
-
-    // let mut p = LazyLogger::default();
-
-    let tasks: Vec<_> = processable
-        .individual_files
-        .into_iter()
-        .zip(processable.top_level_folder_names.into_iter())
-        // BUG: If primary itter has many more
-        // items, zipping will cause issues with how we
-        // generate folder names for output
-        //
-        .map(|(input_file, top_level_name)| {
-            // C:\temp\somefile.docx -> C:\temp\somefile.md
-
-            let output_file_new_ext = input_file.with_extension(target_ext.as_ref());
-
-            let output = match top_level_generator(&top_level_name, &output_dir.as_ref().to_path_buf()) {
-                Ok(output_dir) => {
-                    let new_ext_name = match output_file_new_ext.file_name() {
-                        Some(name) => name,
-                        None => output_file_new_ext.as_os_str(),
-                    };
-                    let output_dir = output_dir.as_ref().join(new_ext_name);
-                    fix_mangled_name(output_dir.to_str().unwrap()).as_ref().into()
-
-                    // replace any of '$' or '~' in any segment after the very first one (so we
-                    // don't strip ~ == $HOME)
-                    // remove_dangerous_chars(&output_dir)
-                    // output_dir
-                }
-                Err(e) => {
-                    error!("Error creating output directory: {:?}", e);
-                    output_dir.as_ref().join(output_file_new_ext.file_name().unwrap())
-                }
-            };
-
-            trace!("Output after corrections: {:?}", output);
-
-            let converter = Arc::clone(&converter);
-
-            // p.log_input_output(&file, &ouput);
-
-            if output.exists() {
-                warn!("Output file already exists: {:?}", output);
-                return tokio::task::spawn(async move { Ok(()) });
+        match task.await {
+            Ok(Ok(())) => success += 1,
+            Ok(Err(e)) => {
+                error!("Task failed with error: {:?}", e);
+                failed += 1;
             }
-
-            tokio::task::spawn(async move {
-                let fut = converter.convert(input_file, output);
-                tokio::pin!(fut);
-                (&mut fut).await
-            })
-        })
-        .collect();
-
-    // p.flush_async().await?;
-
-    info!("Running conversion for {} files", tasks.len());
-
-    let mut es_one = vec![];
-    let mut es_two = vec![];
-
-    let _ = totals(tasks, &mut es_one, &mut es_two).await;
-
-    Ok(())
-}
-
-async fn totals(
-    tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
-    es_one: &mut Vec<JoinError>,
-    es_two: &mut Vec<Error>,
-) {
-    let task_len = tasks.len();
-
-    for task in tasks {
-        let task = task.await;
-
-        let f_one = match task {
-            Ok(o) => o,
             Err(e) => {
-                es_one.push(e);
-                continue;
-            }
-        };
-
-        match f_one {
-            Ok(_) => {}
-            Err(e) => {
-                es_two.push(e);
+                error!("Task panicked or was cancelled: {:?}", e);
+                failed += 1;
             }
         }
     }
-
-    let total_errors = es_one.len() + es_two.len();
-    let success = (task_len - total_errors) as f64;
-    let perc = (success / task_len as f64) * 100.0;
-
-    info!("Processes a total of: {} files", task_len);
-
-    info!("Successly processed: {} files", success);
-    info!("Failed a total of: {} files", total_errors);
-
-    info!("Success rate: {:.2}%", perc);
+    (success, failed)
 }
-
-fn top_level_generator<P: AsRef<Path>>(top_level_name: P, output_dir: P) -> Result<impl AsRef<Path>> {
-    let top_level_name_only = match top_level_name.as_ref().components().next_back() {
-        Some(name) => name.as_os_str().to_str().unwrap(),
-        None => top_level_name.as_ref().to_str().unwrap(),
-    };
-
-    trace!("Top level folder name only: {:?}", top_level_name_only);
-
-    let output_dir = output_dir.as_ref().join(top_level_name_only);
-    if !output_dir.exists() {
-        std::fs::create_dir_all(&output_dir).unwrap();
-    }
-    Ok(output_dir)
-}
-
-// Check the path to ensure no 'DANGER_CHARS' are present in the path. If they are, replace them
-// with an underscore.
-// fn remove_dangerous_chars(output_dir: &Path) -> PathBuf {
-//     match output_dir.components().next_back() {
-//         Some(component) => {
-//             let component_str = component.as_os_str().to_str().unwrap();
-//             let mut name = component_str.to_string();
-//             for c in &DANGER_CHARS {
-//                 name = name.replace(c, "_");
-//             }
-//             output_dir.with_file_name(name)
-//         }
-//         None => output_dir.to_path_buf(),
-//     }
-// }
 
 #[cfg(test)]
 mod conversion_tests {
@@ -359,5 +324,19 @@ mod conversion_tests {
         let name = "some~file$";
         let fixed = fix_mangled_name(name).as_ref().to_string();
         assert_eq!(fixed, "some_file_");
+    }
+
+    #[test]
+    fn test_remove_dot() {
+        assert_eq!(remove_dot(".md"), "md");
+        assert_eq!(remove_dot("md"), "md");
+        assert_eq!(remove_dot(".tar.gz"), "tar.gz");
+    }
+
+    #[test]
+    fn test_needs_fixing() {
+        assert!(needs_fixing(Path::new("file~.txt")));
+        assert!(needs_fixing(Path::new("$file.txt")));
+        assert!(!needs_fixing(Path::new("normal.txt")));
     }
 }

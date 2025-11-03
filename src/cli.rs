@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 use crate::prelude::*;
 
 #[rustfmt::skip]
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = crate::crate_name!(),
     author = crate::crate_authors!(),
@@ -105,6 +105,7 @@ impl From<VerbosityLevel> for tracing_subscriber::filter::EnvFilter {
 
 impl From<u8> for VerbosityLevel {
     #[inline]
+    #[allow(clippy::match_same_arms)]
     fn from(level: u8) -> Self {
         match level {
             0 => VerbosityLevel::Error,
@@ -128,7 +129,7 @@ impl FromStr for VerbosityLevel {
             "INFO" => Ok(VerbosityLevel::Info),
             "DEBUG" => Ok(VerbosityLevel::Debug),
             "TRACE" => Ok(VerbosityLevel::Trace),
-            _ => Err(Error::Generic(format!("Verbosity level: {} is not supported.", s))),
+            _ => Err(Error::Generic(format!("Verbosity level: {s} is not supported."))),
         }
     }
 }

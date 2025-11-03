@@ -15,10 +15,10 @@ mod pre_windows;
 
 use std::sync::Arc;
 
-use eyre::WrapErr;
-
-use crate::conversion::{Converter, ProcessableEntities};
 pub use crate::prelude::*;
+
+// perhaps we use channels to send/recv. The Command output into a bytes channel buffer
+// -- AIM: smooth out the programm calls to pandoc binary (beofre using a native rs lib)
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,57 +28,31 @@ async fn main() -> Result<()> {
 
     let converter = Arc::new(conversion::pandoc::PandocConverter::new());
 
-    let processable = conversion::find_by_ext(&args.input_directory, &args.input_extension).await?;
-    info!("Found {} files to convert", processable.individual_files.len());
+    let convertables = conversion::find_by_ext(
+        //
+        &args.input_directory,
+        &args.input_extension,
+    )
+    .await?;
 
-    // perhaps we use channels to send/recv. The Command output into a bytes channel buffer
-    // -- AIM: smooth out the programm calls to pandoc binary (beofre using a native rs lib)
+    info!("Found {} files to convert", convertables.as_ref().count());
+    // trace!("Processable Entities: {:#?}", processable);
 
-    let res = convert_call(args, processable, converter).await;
-
-    if let Err(e) = res {
-        error!("{:?}", e);
-        return Err(Error::Generic(format!("Failed to convert files due to: {}", e)));
+    if let Some(ref output_dir) = args.output_directory
+        && !output_dir.exists()
+    {
+        tokio::fs::create_dir_all(output_dir).await?;
     }
+
+    conversion::convert_files(
+        convertables,
+        converter,
+        &args.output_extension.as_str(),
+        args.output_directory.as_ref(),
+    )
+    .await?;
 
     info!("Successfully converted all files");
 
     Ok(())
-}
-
-async fn convert_call<C: Converter + Send + Sync + 'static>(
-    args: cli::Cli,
-    processable: ProcessableEntities,
-    converter: Arc<C>,
-) -> Result<()> {
-    let converted_tasks = if let Some(output_dir) = args.output_directory {
-        if !output_dir.exists() {
-            std::fs::create_dir_all(&output_dir).map_err(|e| {
-                Error::Generic(format!("Failed to create output directory: {:?} due to: {}", output_dir, e))
-            })?;
-        }
-
-        tokio::task::spawn(async move {
-            conversion::convert_files_with_output(
-                processable,
-                converter,
-                args.output_extension.as_str(),
-                &output_dir,
-            )
-            .await
-            .wrap_err("Failed to convert files")
-            .map_err(|e| Error::Generic(format!("Failed to convert files due to: {}", e)))
-        })
-    } else {
-        tokio::task::spawn(async move {
-            conversion::convert_files(processable, converter, args.output_extension.as_str())
-                .await
-                .wrap_err("Failed to convert files")
-                .map_err(|e| Error::Generic(format!("Failed to convert files due to: {}", e)))
-        })
-    };
-
-    tokio::pin!(converted_tasks);
-
-    (&mut converted_tasks).await?
 }
